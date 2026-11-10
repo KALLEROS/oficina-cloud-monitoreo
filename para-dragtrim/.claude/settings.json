@@ -1,0 +1,10 @@
+{
+  "enableWorkflows": true,
+  "hooks": {
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/oficina_terrazas.py\"", "async": true, "timeout": 60 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/oficina_terrazas.py\"", "async": true, "timeout": 60 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/oficina_terrazas.py\"", "async": true, "timeout": 60 }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/oficina_terrazas.py\"", "async": true, "timeout": 60 }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/oficina_terrazas.py\"", "async": true, "timeout": 60 }] }]
+  }
+}
