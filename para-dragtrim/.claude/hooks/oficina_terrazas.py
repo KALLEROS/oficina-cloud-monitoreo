@@ -11,6 +11,7 @@ No hace ningún trabajo. Si algo falla, se calla para no estorbar.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,21 +49,63 @@ def git(*args, entrada=None, env=None):
     return r.stdout.decode("utf-8", "replace").strip()
 
 
-def leer_guarda():
+def leer_guarda(ses):
     try:
-        with open(GUARDA, encoding="utf-8") as f:
+        with open(GUARDA.replace(".json", f"_{ses}.json"), encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
-        pass
-    try:                                     # primera vez en esta sesión: trae la lista de archivos que ya había
-        git("fetch", "-q", "--depth=1", "origin", f"{RAMA}:refs/oficina/t")
-        viejo = json.loads(git("show", "refs/oficina/t:oficina/estado-terrazas.json"))
-        return {"archivos": viejo.get("archivos_recientes", []), "enviado": 0}
     except Exception:
         return {"archivos": [], "enviado": 0}
 
 
-def publicar(datos):
+def guardar_guarda(ses, g):
+    with open(GUARDA.replace(".json", f"_{ses}.json"), "w", encoding="utf-8") as f:
+        json.dump(g, f, ensure_ascii=False)
+
+
+def titulo_sesion(d):
+    """El título que tiene la sesión en Claude (sale del transcript), p. ej. "UI" o "Drag Trim"."""
+    ruta = d.get("transcript_path")
+    if not ruta:
+        return None
+    try:
+        with open(ruta, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 2_000_000))
+            cola = f.read().decode("utf-8", "ignore")
+        hallados = re.findall(r'"customTitle"\s*:\s*"((?:[^"\\]|\\.)*)"', cola)
+        return json.loads('"' + hallados[-1] + '"').strip() or None if hallados else None
+    except Exception:
+        return None
+
+
+def remoto():
+    """Lo que ya publicaron las OTRAS sesiones de la tableta (para no borrarlas)."""
+    try:
+        git("fetch", "-q", "--depth=1", "origin", f"+refs/heads/{RAMA}:refs/oficina/t")
+        return json.loads(git("show", "refs/oficina/t:oficina/estado-terrazas.json"))
+    except Exception:
+        return {}
+
+
+def viejo(fecha, minutos=30):
+    try:
+        t = datetime.strptime(str(fecha), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - t).total_seconds() > minutos * 60
+    except Exception:
+        return True
+
+
+def publicar(mio, mis_archivos):
+    """Junta mi monito con los de las otras sesiones y publica un solo archivo."""
+    r = remoto()
+    otros = [a for a in (r.get("agentes") or ([r["agente"]] if r.get("agente") else []))
+             if a.get("id") != mio["id"] and a.get("id") != "terrazas-tableta" and not viejo(a.get("actualizado"))]
+    archivos, vistos = [], set()
+    for f in sorted(mis_archivos + list(r.get("archivos_recientes") or []), key=lambda x: str(x.get("fecha")), reverse=True):
+        if f.get("nombre") not in vistos:
+            vistos.add(f.get("nombre"))
+            archivos.append(f)
+    datos = {"actualizado": ahora(), "agentes": otros + [mio], "archivos_recientes": archivos[:MAX_ARCHIVOS]}
     texto = json.dumps(datos, ensure_ascii=False, indent=2) + "\n"
     blob = git("hash-object", "-w", "--stdin", entrada=texto)
     sub = git("mktree", entrada=f"100644 blob {blob}\testado-terrazas.json\n")
@@ -77,10 +120,11 @@ def main():
     d = json.loads(sys.stdin.buffer.read().decode("utf-8-sig", "replace") or "{}")
     if d.get("agent_id"):
         return                                           # los ayudantes no salen como monitos aparte
+    ses = re.sub(r"[^A-Za-z0-9]", "", str(d.get("session_id") or "x"))[:8] or "x"
     ev = d.get("hook_event_name")
     tool = d.get("tool_name") or ""
     inp = d.get("tool_input") or {}
-    g = leer_guarda()
+    g = leer_guarda(ses)
     area, actividad, estado, urgente = "terrazas", None, "trabajando", False
 
     if ev == "PreToolUse":
@@ -100,7 +144,8 @@ def main():
             if not rel.startswith("..") and "/.obsidian" not in "/" + rel:
                 g["archivos"] = [f for f in g["archivos"] if f.get("nombre") != rel]
                 g["archivos"].insert(0, {"nombre": rel, "origen": "tableta-android", "area": "terrazas",
-                                         "fecha": ahora(), "tipo": "creado" if tool == "Write" else "editado"})
+                                         "fecha": ahora(), "tipo": "creado" if tool == "Write" else "editado",
+                                         "sesion": ses})
                 del g["archivos"][MAX_ARCHIVOS:]
     elif ev == "UserPromptSubmit":
         actividad = "Leyendo el mensaje de Terrazas"
@@ -113,16 +158,20 @@ def main():
     else:
         return
 
-    g["agente"] = {"id": "terrazas-tableta", "nombre": "Alberto Terrazas", "area": area,
-                   "actividad": corto(actividad), "estado": estado,
-                   "modo": "ultra" if g.get("ultra") and estado == "trabajando" else "normal",
-                   "dispositivo": "tableta-android", "origen": "tableta-android", "actualizado": ahora()}
-    listo = urgente or time.time() - g.get("enviado", 0) >= CADA
-    if listo:
-        publicar({"actualizado": ahora(), "agente": g["agente"], "archivos_recientes": g["archivos"]})
+    nombre = (titulo_sesion(d) or g.get("nombre") or f"DragTree {ses[:4]}")[:18]
+    g["nombre"] = nombre
+    mio = {"id": f"terrazas-{ses}", "nombre": nombre, "persona": "Alberto Terrazas", "area": area,
+           "actividad": corto(actividad), "estado": estado,
+           "modo": "ultra" if g.get("ultra") and estado == "trabajando" else "normal",
+           "dispositivo": "tableta-android", "origen": "tableta-android", "actualizado": ahora()}
+    if urgente or time.time() - g.get("enviado", 0) >= CADA:
+        try:
+            publicar(mio, g["archivos"])
+        except Exception:
+            time.sleep(2)
+            publicar(mio, g["archivos"])         # otra sesión publicó al mismo tiempo: un reintento
         g["enviado"] = time.time()
-    with open(GUARDA, "w", encoding="utf-8") as f:
-        json.dump(g, f, ensure_ascii=False)
+    guardar_guarda(ses, g)
 
 
 if __name__ == "__main__":

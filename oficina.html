@@ -1507,7 +1507,7 @@ function procesar(datos){
     const modelo = String(r.modelo || '').toLowerCase();
     a.modelo = MODELOS[modelo] ? modelo : null;
     a.tableta = esTableta(r);
-    a.dispositivo = a.tableta ? 'Terrazas — Tableta Android' : (r.dispositivo || r.origen) ? 'Calleros — Laptop' : '';
+    a.dispositivo = a.tableta ? 'Tableta Android' : (r.dispositivo || r.origen) ? 'Calleros — Laptop' : '';
     a.ultraPedido = String(r.modo || '').toLowerCase() === 'ultra' || !!r.ultra;
     const firma = (r.area || '') + '|' + (r.actividad || '') + '|' + (r.actualizado || '');
     if (firma !== a.firma){ a.firma = firma; a.vistoCambio = ahora; }
@@ -1548,8 +1548,9 @@ function juntar(base, terr){
   const datos = Object.assign({}, base);
   let agentes = Array.isArray(base.agentes) ? base.agentes.slice() : [];
   let archivos = Array.isArray(base.archivos_recientes) ? base.archivos_recientes.slice() : [];
-  if (terr && terr.agente){
-    agentes = agentes.filter(a => !esTableta(a)).concat([terr.agente]);
+  const deTableta = terr ? (Array.isArray(terr.agentes) ? terr.agentes : terr.agente ? [terr.agente] : []) : [];
+  if (deTableta.length){
+    agentes = agentes.filter(a => !esTableta(a)).concat(deTableta);   // una sesión de la tableta = un monito
     archivos = archivos.filter(f => !esTableta(f)).concat(Array.isArray(terr.archivos_recientes) ? terr.archivos_recientes : []);
   }
   datos.agentes = agentes; datos.archivos_recientes = archivos;
@@ -1725,7 +1726,7 @@ function listaArchivos(lista){
 }
 function fichaAgente(a){
   const m = MODELOS[a.modelo];
-  const filas = [['Dispositivo', a.dispositivo || '—'], ['Área', NOMBRE_AREA[a.areaDestino] || '—'], ['Haciendo', a.textoPendiente || '—'],
+  const filas = [['Persona', a.tableta ? 'Alberto Terrazas' : 'Calleros'], ['Dispositivo', a.dispositivo || '—'], ['Área', NOMBRE_AREA[a.areaDestino] || '—'], ['Haciendo', a.textoPendiente || '—'],
                  ['Estado', a.estadoTxt || '—'], ['Modo', a.ultra ? 'ULTRA' : 'Normal'], ['Modelo', m ? m.nombre : 'sin dato todavía'],
                  ['Último aviso', a.ts ? hace(a.ts / 1000) : '—']];
   let html = filas.map(([k, v]) => `<div class="fila"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
@@ -1735,10 +1736,10 @@ function fichaAgente(a){
 
 /* Oficina Terrazas: lo que sale de la tableta Android de Alberto Terrazas (solo lectura) */
 function panelTerrazas(){
-  const t = [...agentes.values()].find(a => a.tableta && a.fase !== 'saliendo');
+  const ts = [...agentes.values()].filter(a => a.tableta && a.fase !== 'saliendo');
   let html = `<p><span class="origen tableta">TABLETA ANDROID</span>Alberto Terrazas</p>`;
-  html += t ? `<div class="fila"><span>Haciendo</span><span>${esc(t.textoPendiente || '—')}</span></div>
-               <div class="fila"><span>Estado</span><span>${esc(t.estadoTxt || '—')}${t.ultra ? ' · ULTRA' : ''}</span></div>`
+  html += ts.length ? ts.map(t => `<div class="tarjeta" style="border-left-color:#3ddc84"><b>${esc(t.nombre)}${t.ultra ? ' · ULTRA' : ''}</b>
+               <div>${esc(t.textoPendiente || '—')}</div><div><i>${esc(t.estadoTxt || '—')}</i></div></div>`).join('')
             : '<p class="vacio">La tableta no ha reportado nada todavía.</p>';
   html += '<h4 style="margin:16px 0 8px">Archivos recientes</h4>' + listaArchivos(archivosTableta());
   html += '<p class="meta" style="margin-top:12px">Todo esto se respalda cada noche en la carpeta terrazas de la laptop de Calleros.</p>';
