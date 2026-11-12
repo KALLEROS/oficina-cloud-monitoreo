@@ -182,22 +182,13 @@ const T = 16, COLS = 32, ROWS = 52, W = COLS * T, H = ROWS * T;
 const FILAS_ARRIBA = 22;        // la planta principal; lo demás se ve bajando con el scroll
 const SEGUNDOS_INACTIVO = 60;   // sin reportar más de esto -> Descanso
 /* De dónde lee: en la laptop, estado.json del servidor local; en el teléfono (GitHub Pages),
-   el repo PRIVADO de estado con la llave de solo lectura que trae el QR. La página nunca escribe. */
+   los archivos públicos de estado. La página nunca escribe. */
 const EN_NUBE = location.protocol !== 'file:' && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const NUBE = {
-  estado: 'https://api.github.com/repos/KALLEROS/oficina-cloud-monitoreo-estado/contents/estado.json',
-  terrazas: 'https://api.github.com/repos/daniterrazas01-source/dragtrim/contents/oficina/estado-terrazas.json?ref=claude/oficina-estado',
+  estado: 'https://raw.githubusercontent.com/KALLEROS/oficina-cloud-monitoreo-estado/main/estado.json',
+  terrazas: 'https://raw.githubusercontent.com/daniterrazas01-source/dragtrim/claude/oficina-estado/oficina/estado-terrazas.json',
 };
-const CADA_MS = EN_NUBE ? 15000 : 2000;   // el teléfono revisa cada 15 s (nunca más de 20 s)
-const LLAVE = (() => {
-  let k = null;
-  const m = location.hash.match(/[#&]k=([A-Za-z0-9_]+)/);
-  try {
-    if (m){ localStorage.setItem('oficina-llave', m[1]); history.replaceState(null, '', location.pathname); }
-    k = localStorage.getItem('oficina-llave');
-  } catch (e) { k = m ? m[1] : null; }
-  return k;
-})();
+const CADA_MS = EN_NUBE ? 15000 : 2000;   // el teléfono revisa cada 15 s
 const VELOCIDAD = 100;          // pixeles por segundo al caminar
 const AVISO = 0.35;             // segundos con "!" antes de levantarse
 const FPS = 30;                 // cuadros por segundo (ahorra batería)
@@ -1537,9 +1528,8 @@ function procesar(datos){
   primeraLectura = false;
 }
 const esTableta = r => /tableta|android/i.test(String(r.dispositivo || r.origen || ''));
-async function leerJSON(url, conLlave){
-  const h = conLlave ? { Authorization: 'Bearer ' + LLAVE, Accept: 'application/vnd.github.raw+json' } : {};
-  const r = await fetch(url, { cache: 'no-store', headers: h });
+async function leerJSON(url){
+  const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
   if (!r.ok){ const e = new Error('HTTP ' + r.status); e.codigo = r.status; throw e; }
   return JSON.parse((await r.text()).replace(/^﻿/, ''));
 }
@@ -1556,26 +1546,22 @@ function juntar(base, terr){
   datos.agentes = agentes; datos.archivos_recientes = archivos;
   return datos;
 }
-let errorNube = '';
 async function leerEstado(){
   if (location.protocol === 'file:' || leyendo) return;
-  if (EN_NUBE && !LLAVE){ errorNube = 'sin-llave'; return; }
   leyendo = true;
   try {
     let datos;
     if (EN_NUBE){
-      const [base, terr] = await Promise.all([leerJSON(NUBE.estado, true), leerJSON(NUBE.terrazas, true).catch(() => null)]);
+      const [base, terr] = await Promise.all([leerJSON(NUBE.estado), leerJSON(NUBE.terrazas).catch(() => null)]);
       datos = juntar(base, terr);
-      errorNube = '';
     } else {
-      try { datos = await leerJSON('estado.json?t=' + Date.now(), false); }
+      try { datos = await leerJSON('estado.json'); }
       catch (e) { if (e instanceof SyntaxError) return; throw e; }   // a medio escribir: se ignora esta vuelta
     }
     ultimosDatos = datos; ultimaOK = Date.now(); fallos = 0;
     procesar(datos);
   } catch (e) {
     fallos++;
-    if (EN_NUBE && (e.codigo === 401 || e.codigo === 403 || e.codigo === 404)) errorNube = 'llave';
     if (ultimosDatos) procesar(ultimosDatos);   // aunque no haya señal, aplica la regla de los 60 s
   } finally { leyendo = false; }
 }
@@ -1673,13 +1659,6 @@ function barra(){
   $('cuantos').textContent = n === 0 ? 'sin agentes' : n === 1 ? '1 agente' : n + ' agentes';
   const senal = $('senal'), st = $('senalTexto');
   if (location.protocol === 'file:'){ senal.className = 'senal mal'; st.textContent = 'Abre con iniciar_oficina.bat'; }
-  else if (EN_NUBE && errorNube){
-    senal.className = 'senal mal'; st.textContent = 'Sin acceso';
-    $('avisoTexto').innerHTML = errorNube === 'sin-llave'
-      ? 'Esta oficina es privada.<br>Ábrela escaneando <b>el QR de Calleros</b>.'
-      : 'La llave de este teléfono ya no sirve (se revocó o venció).<br>Escanea <b>el QR nuevo</b>.';
-    $('aviso').style.display = 'flex';
-  }
   else if (ultimaOK && Date.now() - ultimaOK < CADA_MS + 3500){ senal.className = 'senal ok'; st.textContent = 'EN VIVO'; $('aviso').style.display = 'none'; }
   else if (ultimaOK || fallos > 2){ senal.className = 'senal mal'; st.textContent = EN_NUBE ? 'SIN SEÑAL' : 'SIN SEÑAL: ¿cerraste la ventana del servidor?'; }
   if (ultimoReporte){
